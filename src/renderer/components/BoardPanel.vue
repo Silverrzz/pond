@@ -4,7 +4,7 @@ import ChessBoard from './ChessBoard.vue';
 import PlayerBar from './PlayerBar.vue';
 
 const { game } = usePond();
-const { state, flipped, reviewPly, status, submitting } = game;
+const { state, frame, analysis, flipped, reviewPly, status, submitting } = game;
 </script>
 
 <template>
@@ -22,7 +22,7 @@ const { state, flipped, reviewPly, status, submitting } = game;
         role="status"
         :class="{
           playing: state?.phase === 'playing' && reviewPly === null,
-          'duck-phase': state?.pending && reviewPly === null
+          'duck-phase': frame?.pending && (analysis.enabled || reviewPly === null)
         }"
       >
         <span id="turn-text">{{ status }}</span>
@@ -30,7 +30,9 @@ const { state, flipped, reviewPly, status, submitting } = game;
       <button
         id="cancel-piece"
         :hidden="
-          !state?.pending || reviewPly !== null || !['playing', 'paused'].includes(state?.phase)
+          !frame?.pending ||
+          (!analysis.enabled &&
+            (reviewPly !== null || !['playing', 'paused'].includes(state?.phase)))
         "
         :disabled="submitting"
         title="Undo piece move (Esc)"

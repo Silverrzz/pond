@@ -95,10 +95,13 @@ class Engine {
     if (this.closed) return Promise.reject(new Error('Engine is closed.'));
     if (this.waiter) return Promise.reject(new Error('Engine is already busy.'));
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => this.fail(new Error(`Engine timed out after ${command.split(' ')[0]}.`)),
-        Math.min(timeout, 2147483647)
-      );
+      const timer =
+        timeout > 0
+          ? setTimeout(
+              () => this.fail(new Error(`Engine timed out after ${command.split(' ')[0]}.`)),
+              Math.min(timeout, 2147483647)
+            )
+          : null;
       this.waiter = { accept, resolve, reject, timer };
       try {
         this.send(command);
@@ -182,6 +185,16 @@ class Engine {
       if (!move || ['0000', '(none)', 'none'].includes(move))
         throw new Error('Engine returned no move in a playable position.');
       return move;
+    } finally {
+      this.onInfo = null;
+    }
+  }
+
+  async analyze(fen, moves, onInfo) {
+    this.position(fen, moves);
+    this.onInfo = onInfo;
+    try {
+      return await this.request('go infinite', (line) => /^bestmove\s/.test(line), 0);
     } finally {
       this.onInfo = null;
     }

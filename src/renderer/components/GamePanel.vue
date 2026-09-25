@@ -5,7 +5,8 @@ import { sideName, squareName } from '../shared/format';
 import MoveHistory from './MoveHistory.vue';
 
 const { game, commands, activeTab } = usePond();
-const { state, frame, ply, heading, reviewPly, reviewTarget, starting, submitting } = game;
+const { state, frame, analysis, ply, heading, reviewPly, reviewTarget, starting, submitting } =
+  game;
 const message = computed(() =>
   !state.value ||
   state.value.phase === 'starting' ||
@@ -14,7 +15,9 @@ const message = computed(() =>
     : state.value.status
 );
 const playable = computed(() => ['playing', 'paused'].includes(state.value?.phase));
-const canCopy = computed(() => !state.value?.pending || reviewPly.value !== null);
+const canCopy = computed(() =>
+  analysis.value.enabled ? !frame.value?.pending : !state.value?.pending || reviewPly.value !== null
+);
 const tabs = [
   { name: 'moves', label: 'Moves' },
   { name: 'position', label: 'FEN' }
@@ -141,7 +144,7 @@ const tabs = [
         </svg>
       </button>
     </div>
-    <div class="game-controls" :hidden="!state || state.phase === 'ready'">
+    <div class="game-controls" :hidden="!state || state.phase === 'ready' || analysis.enabled">
       <button
         id="pause"
         :hidden="!['playing', 'paused', 'starting'].includes(state?.phase)"

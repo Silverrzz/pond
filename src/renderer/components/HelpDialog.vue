@@ -27,6 +27,18 @@ const open = defineModel({ type: Boolean, default: false });
     </p>
     <h3>960 castling</h3>
     <p>Move the king onto its rook. The king finishes on c/g; the rook on d/f.</p>
+    <h3>Analysis</h3>
+    <p>
+      Analysis (A) opens the displayed position and pauses a running game. New board starts a fresh
+      position; Open PGN and Paste load games or positions without replacing your game. Select an
+      engine for continuous analysis, or explore moves without one.
+    </p>
+    <p>
+      Scores are from White's perspective. Select a search row to expand its line. Undo takes back a
+      variation move; Reset variation returns to the selected position. Selecting another move
+      discards the variation. Save exports the displayed analysis line. Return to game restores the
+      original game; Resume continues play.
+    </p>
     <h3>Clocks</h3>
     <p>
       The clock runs through duck placement. Increment is added after the turn. Simple delay runs

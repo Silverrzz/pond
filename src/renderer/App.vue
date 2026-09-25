@@ -46,6 +46,11 @@ const commands = {
   openGame: () =>
     feedback.action(async () => {
       if (!game.state.value) return;
+      if (game.analysis.value.enabled) {
+        const pgn = await window.pond.openAnalysisPgn();
+        if (pgn) await game.startAnalysis(0, { source: 'pgn', pgn });
+        return;
+      }
       if (game.state.value.phase === 'playing') await window.pond.pause();
       await window.pond.openGame();
     }),
@@ -83,9 +88,13 @@ const commands = {
     ),
   copyFen: () =>
     feedback.action(async () => {
-      await window.pond.copyFen(game.ply.value);
+      if (game.analysis.value.enabled)
+        await window.pond.copyAnalysisFen({ revision: game.analysis.value.revision });
+      else await window.pond.copyFen(game.ply.value);
       feedback.notify('FEN copied');
     }),
+  analysis: () => (game.analysis.value.enabled ? game.stopAnalysis() : game.startAnalysis()),
+  newAnalysis: () => game.startAnalysis(0, { source: 'fresh', variant: game.state.value.variant }),
   engines: () => {
     enginesOpen.value = true;
   },

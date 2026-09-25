@@ -4,7 +4,15 @@ export function useSearchOutput(game) {
   const output = shallowRef({ state: null, searches: {}, names: {}, ply: 0 });
   let timer;
   watch(
-    [game.state, game.liveSearches, game.evaluations, game.searches, game.names, game.ply],
+    [
+      game.state,
+      game.liveSearches,
+      game.evaluations,
+      game.searches,
+      game.names,
+      game.ply,
+      game.analysis
+    ],
     () => {
       if (timer) return;
       timer = setTimeout(() => {
@@ -14,7 +22,10 @@ export function useSearchOutput(game) {
             ? {
                 ...game.state.value,
                 searches: game.liveSearches.value,
-                evaluations: game.evaluations.value
+                analysisActive: game.analysis.value.enabled,
+                evaluations: game.analysis.value.enabled
+                  ? game.analysis.value.evaluations
+                  : game.evaluations.value
               }
             : null,
           searches: game.searches.value,

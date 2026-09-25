@@ -9,6 +9,8 @@ const now = ref(performance.now());
 let timer;
 const display = computed(() => {
   const clock = game.clock.value?.[props.side];
+  if (game.analysis.value.enabled)
+    return { time: '-', detail: 'Analysis', running: false, low: false };
   if (!clock) return { time: '5:00', detail: '', running: false, low: false };
   const elapsed = Math.max(0, now.value - game.clockReceived.value);
   const running = clock.running && game.state.value?.phase === 'playing';

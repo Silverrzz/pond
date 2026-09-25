@@ -2,6 +2,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { Session } = require('./session');
+const { Analysis } = require('./analysis');
 const { DuckGame, sideName } = require('./rules');
 const { Engine } = require('./engine');
 const { importEngine, isEngineExecutable } = require('./engine-library');
@@ -12,7 +13,7 @@ if (process.platform === 'win32') app.setAppUserModelId('app.thepond.chess');
 
 let window;
 let catalog = new Map();
-let preferences = { imported: [], settings: {}, aliases: {} };
+let preferences = { imported: [], settings: {}, aliases: {}, engineOrder: [] };
 let logs = [];
 let logTimer;
 let saveTimer;
@@ -40,14 +41,17 @@ const log = (engine, direction, text) => {
       send('logs', logs);
     }, 250);
 };
-const session = new Session((id) => {
+const resolveEngine = (id) => {
   const profile = catalog.get(engineId(id));
   if (!profile)
     throw new Error(
       'An engine is missing. Open Engines to add it again or start a new game with another player.'
     );
   return { ...profile, settings: preferences.settings[profile.id] || {} };
-}, log);
+};
+const session = new Session(resolveEngine, log);
+const analysis = new Analysis(resolveEngine, log);
+analysis.on('state', (state) => send('analysis', state));
 
 const writeJson = (file, data) => writeText(file, JSON.stringify(data, null, 2));
 
@@ -63,6 +67,11 @@ async function writeText(file, text) {
 }
 
 session.on('state', (state) => {
+  if (
+    analysis.enabled &&
+    (state.id !== analysis.gameId || ['playing', 'starting'].includes(state.phase))
+  )
+    analysis.close();
   send('state', state);
   clearTimeout(saveTimer);
   if (state.phase !== 'ready')
@@ -85,15 +94,40 @@ async function scan() {
       if (entry.isDirectory()) await visit(file);
       else if ((entry.isFile() || entry.isSymbolicLink()) && (await isEngineExecutable(file))) {
         const id = path.relative(root, file);
-        found.set(id, { id, file, name: entry.name.replace(/\.exe$/i, '') });
+        const stat = await fs.stat(file);
+        found.set(id, {
+          id,
+          file,
+          name: entry.name.replace(/\.exe$/i, ''),
+          addedAt: stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.ctimeMs
+        });
       }
     }
   }
   await visit(root);
+  const known = new Set(preferences.engineOrder);
+  const order = [
+    ...preferences.engineOrder.filter((id) => found.has(id)),
+    ...[...found.values()]
+      .filter(({ id }) => !known.has(id))
+      .sort((a, b) => a.addedAt - b.addedAt || a.id.localeCompare(b.id))
+      .map(({ id }) => id)
+  ];
+  if (JSON.stringify(order) !== JSON.stringify(preferences.engineOrder)) {
+    preferences.engineOrder = order;
+    await writeJson(dataFile('preferences.json'), preferences);
+  }
+  const addedOrder = new Map(order.map((id, index) => [id, index]));
   catalog = found;
   return [...found.values()]
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-    .map(({ id, name, file }) => ({ id, name, file, settings: preferences.settings[id] || {} }));
+    .map(({ id, name, file }) => ({
+      id,
+      name,
+      file,
+      addedOrder: addedOrder.get(id),
+      settings: preferences.settings[id] || {}
+    }));
 }
 
 async function inspect(id) {
@@ -136,7 +170,10 @@ app
           ? loaded.imported.filter((x) => typeof x === 'string')
           : [],
         settings: loaded.settings && typeof loaded.settings === 'object' ? loaded.settings : {},
-        aliases: loaded.aliases && typeof loaded.aliases === 'object' ? loaded.aliases : {}
+        aliases: loaded.aliases && typeof loaded.aliases === 'object' ? loaded.aliases : {},
+        engineOrder: Array.isArray(loaded.engineOrder)
+          ? [...new Set(loaded.engineOrder.filter((id) => typeof id === 'string'))]
+          : []
       };
     } catch {}
     await fs.mkdir(engineDirectory(), { recursive: true });
@@ -202,6 +239,7 @@ app
       state: session.snapshot(),
       engines: await scan(),
       directory: engineDirectory(),
+      analysis: analysis.snapshot(),
       logs
     }));
     handle('scan', scan);
@@ -276,6 +314,25 @@ app
     handle('move', (data) => session.move(data));
     handle('cancel-piece', () => session.cancelPiece());
     handle('takeback', () => session.takeback());
+    handle('analysis-start', (data) => analysis.select(session, data));
+    handle('analysis-open-pgn', async () => {
+      const result = await dialog.showOpenDialog(window, {
+        title: 'Choose a PGN to analyse',
+        properties: ['openFile'],
+        filters: [{ name: 'PGN game', extensions: ['pgn'] }]
+      });
+      return result.canceled ? null : readPgn(result.filePaths[0]);
+    });
+    handle('analysis-stop', () => analysis.close());
+    handle('analysis-move', (data) => analysis.move(data));
+    handle('analysis-back', (data) => analysis.back(data));
+    handle('analysis-reset', (data) => analysis.reset(data));
+    handle('analysis-settings', (data) => analysis.settings(data));
+    handle('analysis-copy-fen', (data) => {
+      analysis.requirePosition(data);
+      if (analysis.game.pending) throw new Error('Complete or undo the piece move first.');
+      clipboard.writeText(analysis.game.fen());
+    });
     handle('review', (ply) => ({
       ...session.game.at(ply),
       ply,
@@ -307,6 +364,7 @@ app
       clipboard.writeText(session.game.at(ply).fen);
     });
     handle('save-game', async () => {
+      const contents = analysis.enabled ? analysis.pgn() : pgn();
       const result = await dialog.showSaveDialog(window, {
         title: 'Save PGN game',
         defaultPath: 'game-' + new Date().toISOString().slice(0, 10) + '.pgn',
@@ -316,7 +374,7 @@ app
       const file = path.extname(result.filePath) ? result.filePath : result.filePath + '.pgn';
       if (path.extname(file).toLowerCase() !== '.pgn')
         throw new Error('Save the game with a .pgn extension.');
-      await writeText(file, pgn());
+      await writeText(file, contents);
       return true;
     });
     handle('open-game', async () => {
@@ -337,9 +395,11 @@ app
     });
     window.on('closed', () => {
       window = null;
+      analysis.close();
       session.close();
     });
     powerMonitor.on('suspend', () => {
+      if (analysis.enabled) analysis.settings({ revision: analysis.revision, running: false });
       if (['playing', 'starting'].includes(session.phase))
         session.pause('Paused because the computer went to sleep.');
     });
@@ -353,6 +413,7 @@ app.on('window-all-closed', () => {
   void saveChain.catch(() => {}).finally(() => app.quit());
 });
 app.on('before-quit', () => {
+  analysis.close();
   session.close();
   for (const engine of probes) engine.close();
   Engine.killAll();

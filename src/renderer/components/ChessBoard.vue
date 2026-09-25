@@ -7,25 +7,40 @@ import { useBoardMotion } from '../composables/useBoardMotion';
 import PieceImage from './PieceImage.vue';
 
 const { game } = usePond();
-const { state, frame, selected, flipped, promotionMove, humanTurn, reviewPly, ply } = game;
+const {
+  state,
+  boardState,
+  boardPly,
+  analysis,
+  frame,
+  selected,
+  flipped,
+  promotionMove,
+  humanTurn,
+  reviewPly
+} = game;
 const { positionKey, annotations, toggleAnnotation } = useBoardAnnotations(game);
 const { motions, hiddenSquares, finishMotion } = useBoardMotion(game);
 const board = ref(null);
 const promotion = ref(null);
 const focus = ref(12);
 const gesture = shallowRef(null);
-const pending = computed(() => (reviewPly.value === null ? state.value?.pending : null));
+const pending = computed(() =>
+  analysis.value.enabled || reviewPly.value === null ? boardState.value?.pending : null
+);
 const draggedPiece = computed(() =>
   gesture.value?.kind === 'piece' && gesture.value.active ? gesture.value : null
 );
 const cells = computed(() => {
   if (!frame.value) return [];
-  const last = state.value.records[ply.value - 1];
+  const last = boardState.value.records[boardPly.value - 1];
   const legal = new Set(
     humanTurn.value
       ? pending.value
         ? frame.value.board.flatMap((piece, i) => (!piece && i !== frame.value.duck ? [i] : []))
-        : state.value.legal.filter((move) => move.from === selected.value).map((move) => move.to)
+        : boardState.value.legal
+            .filter((move) => move.from === selected.value)
+            .map((move) => move.to)
       : []
   );
   const highlighted = pending.value
@@ -43,7 +58,7 @@ const cells = computed(() => {
       duck = square === frame.value.duck;
     const castle =
       humanTurn.value &&
-      state.value.legal.find(
+      boardState.value.legal.find(
         (move) => move.from === selected.value && move.to === square && move.castle
       );
     return {
@@ -67,7 +82,7 @@ const cells = computed(() => {
         : squareName(square),
       draggable:
         humanTurn.value &&
-        (pending.value ? duck : state.value.legal.some((move) => move.from === square))
+        (pending.value ? duck : boardState.value.legal.some((move) => move.from === square))
     };
   });
 });
@@ -77,6 +92,85 @@ function point(square) {
     rank = Math.floor(square / 8);
   return { x: (flipped.value ? 7 - file : file) + 0.5, y: (flipped.value ? rank : 7 - rank) + 0.5 };
 }
+
+function arrowShape(mark) {
+  const start = point(mark.from),
+    end = point(mark.to);
+  const dx = end.x - start.x,
+    dy = end.y - start.y;
+  const knight = mark.knight ?? Math.abs(dx) * Math.abs(dy) === 2;
+  const elbow = knight
+    ? Math.abs(dx) > Math.abs(dy)
+      ? { x: end.x, y: start.y }
+      : { x: start.x, y: end.y }
+    : start;
+  const length = Math.hypot(end.x - elbow.x, end.y - elbow.y) || 1;
+  const ux = (end.x - elbow.x) / length,
+    uy = (end.y - elbow.y) / length;
+  const neck = { x: end.x - ux * 0.34, y: end.y - uy * 0.34 };
+  return {
+    ...mark,
+    key: `${mark.from}-${mark.to}`,
+    start,
+    end,
+    circle: mark.from === mark.to,
+    path: `M${start.x} ${start.y}${knight ? `L${elbow.x} ${elbow.y}` : ''}L${neck.x} ${neck.y}`,
+    head: `${end.x},${end.y} ${neck.x - uy * 0.24},${neck.y + ux * 0.24} ${neck.x + uy * 0.24},${neck.y - ux * 0.24}`
+  };
+}
+
+const suggestions = computed(() => {
+  const current = analysis.value;
+  if (!current.enabled || frame.value?.result || !current.search) return [];
+  const rows = new Map();
+  for (const row of current.search.rows) {
+    const rank = row.multipv || 1;
+    if (row.pv && rank <= current.lines && (!rows.has(rank) || row.depth >= rows.get(rank).depth))
+      rows.set(rank, row);
+  }
+  const seen = new Set();
+  const marks = [];
+  const at = (name) => 'abcdefgh'.indexOf(name[0]) + (Number(name[1]) - 1) * 8;
+  for (const [rank, row] of [...rows].sort(([a], [b]) => a - b)) {
+    const move = row.pv.split(/\s+/)[0];
+    const match = /^([a-h][1-8])([a-h][1-8])([qrbn])?(?:@([a-h][1-8]))?$/.exec(move);
+    if (!match) continue;
+    let from,
+      to,
+      knight = false;
+    if (pending.value) {
+      if (!match[4] || move.split('@')[0] !== pending.value.notation) continue;
+      to = at(match[4]);
+      if (frame.value.board[to] || to === frame.value.duck) continue;
+      from = frame.value.duck < 0 ? to : frame.value.duck;
+    } else {
+      from = at(match[1]);
+      const legal = boardState.value.legal.find(
+        (candidate) =>
+          candidate.from === from &&
+          candidate.to === at(match[2]) &&
+          candidate.promotion === match[3]
+      );
+      if (!legal) continue;
+      to = legal.castle?.kingTo ?? legal.to;
+      knight = frame.value.board[from]?.toLowerCase() === 'n';
+    }
+    const key = `${from}-${to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    marks.push(
+      arrowShape({
+        from,
+        to,
+        knight,
+        rank,
+        duck: !!pending.value,
+        opacity: Math.max(0.18, 0.9 * 0.62 ** (rank - 1))
+      })
+    );
+  }
+  return marks.reverse();
+});
 
 function pointerPosition(event) {
   const bounds = board.value.getBoundingClientRect();
@@ -165,8 +259,8 @@ function pointerUp(event) {
     return;
   }
   const legal = pending.value
-    ? !state.value.board[square] && square !== state.value.duck
-    : state.value.legal.some((move) => move.from === current.from && move.to === square);
+    ? !boardState.value.board[square] && square !== boardState.value.duck
+    : boardState.value.legal.some((move) => move.from === current.from && move.to === square);
   if (legal) {
     if (!pending.value) selected.value = current.from;
     game.clickSquare(square, true);
@@ -197,30 +291,7 @@ const marks = computed(() => {
         preview
       ]
     : annotations.value;
-  return visible.map((mark) => {
-    const start = point(mark.from),
-      end = point(mark.to);
-    const dx = end.x - start.x,
-      dy = end.y - start.y;
-    const knight = Math.abs(dx) * Math.abs(dy) === 2;
-    const elbow = knight
-      ? Math.abs(dx) > Math.abs(dy)
-        ? { x: end.x, y: start.y }
-        : { x: start.x, y: end.y }
-      : start;
-    const length = Math.hypot(end.x - elbow.x, end.y - elbow.y) || 1;
-    const ux = (end.x - elbow.x) / length,
-      uy = (end.y - elbow.y) / length;
-    const neck = { x: end.x - ux * 0.34, y: end.y - uy * 0.34 };
-    return {
-      ...mark,
-      key: `${mark.from}-${mark.to}`,
-      start,
-      circle: mark.from === mark.to,
-      path: `M${start.x} ${start.y}${knight ? `L${elbow.x} ${elbow.y}` : ''}L${neck.x} ${neck.y}`,
-      head: `${end.x},${end.y} ${neck.x - uy * 0.24},${neck.y + ux * 0.24} ${neck.x + uy * 0.24},${neck.y - ux * 0.24}`
-    };
-  });
+  return visible.map(arrowShape);
 });
 
 function motionStyle(motion) {
@@ -324,6 +395,26 @@ onUnmounted(() => {
       >
         <PieceImage :piece="motion.piece" :duck="motion.duck" />
       </div>
+      <svg
+        v-if="suggestions.length"
+        class="board-suggestions"
+        viewBox="0 0 8 8"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <g
+          v-for="mark in suggestions"
+          :key="mark.key"
+          :class="{ 'duck-suggestion': mark.duck }"
+          :style="{ opacity: mark.opacity }"
+        >
+          <circle v-if="mark.circle || mark.duck" :cx="mark.end.x" :cy="mark.end.y" r=".32" />
+          <template v-if="!mark.circle">
+            <path :d="mark.path" />
+            <polygon :points="mark.head" />
+          </template>
+        </g>
+      </svg>
       <svg class="board-annotations" viewBox="0 0 8 8" aria-hidden="true" focusable="false">
         <g v-for="mark in marks" :key="mark.key" :class="{ preview: mark.preview }">
           <circle v-if="mark.circle" :cx="mark.start.x" :cy="mark.start.y" r=".38" />
@@ -354,7 +445,7 @@ onUnmounted(() => {
         >
           <PieceImage
             v-if="promotionMove"
-            :piece="state.turn === 'w' ? piece.toUpperCase() : piece"
+            :piece="boardState.turn === 'w' ? piece.toUpperCase() : piece"
           />
         </button>
       </div>

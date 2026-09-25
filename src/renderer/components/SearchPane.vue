@@ -2,7 +2,15 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { compactNumber, formatScore, positionLabel, searchTime, sideName } from '../shared/format';
 
-const props = defineProps({ channel: String, state: Object, search: Object, name: String });
+const props = defineProps({
+  channel: String,
+  state: Object,
+  search: Object,
+  name: String,
+  showHeading: { type: Boolean, default: true },
+  inlineVariation: Boolean,
+  idPrefix: { type: String, default: 'search' }
+});
 const selected = ref(null);
 const variation = ref(null);
 const columns = [
@@ -41,7 +49,7 @@ const status = computed(() => {
 async function select(row) {
   selected.value = selected.value === key(row) ? null : key(row);
   await nextTick();
-  variation.value?.focus({ preventScroll: true });
+  if (!props.inlineVariation) variation.value?.focus({ preventScroll: true });
 }
 watch(
   () => props.state?.id,
@@ -53,11 +61,11 @@ watch(
 
 <template>
   <section
-    :id="'search-' + channel"
+    :id="idPrefix + '-' + channel"
     class="search-pane"
     :aria-label="sideName(channel) + ' engine output'"
   >
-    <div class="search-heading" :class="{ searching: live }">
+    <div v-if="showHeading" class="search-heading" :class="{ searching: live }">
       <strong class="search-name" :title="source">
         {{ sideName(channel) + (source ? ' · ' + source : '') }}
       </strong>
@@ -77,7 +85,10 @@ watch(
             v-for="row in rows"
             :key="key(row)"
             tabindex="0"
-            :class="{ 'selected-row': selected === key(row) }"
+            :class="{
+              'selected-row': selected === key(row),
+              'expanded-variation': inlineVariation && selected === key(row)
+            }"
             :aria-expanded="selected === key(row)"
             @click="select(row)"
             @keydown.enter.prevent="select(row)"
@@ -102,6 +113,7 @@ watch(
       </table>
     </div>
     <div
+      v-if="!inlineVariation"
       ref="variation"
       class="search-variation"
       :hidden="!selectedRow?.pv"

@@ -26,7 +26,7 @@ onUnmounted(() => observer?.disconnect());
 <template>
   <section class="graph-panel" aria-label="Evaluation history">
     <div class="dock-heading">
-      <h2>Evaluation</h2>
+      <h2>{{ output.state?.analysisActive ? 'Analysis evaluations' : 'Evaluation' }}</h2>
       <span class="graph-perspective">White’s perspective</span>
       <div class="graph-legend">
         <span class="legend-w">White</span>

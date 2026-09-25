@@ -18,18 +18,20 @@ export function useBoardMotion(game) {
   const position = computed(() => {
     const frame = game.frame.value;
     const state = game.state.value;
+    const boardState = game.boardState.value;
     if (!frame || !state) return null;
     return {
       board: frame.board,
       duck: frame.duck,
-      ply: game.ply.value,
-      pending: game.reviewPly.value === null ? state.pending : null,
+      ply: game.boardPly.value,
+      pending:
+        game.analysis.value.enabled || game.reviewPly.value === null ? boardState.pending : null,
       id: state.id,
       startedAt: state.config.startedAt,
       initialFen: state.initialFen,
-      moves: state.moves,
-      records: state.records,
-      legal: state.legal
+      moves: boardState.moves,
+      records: boardState.records,
+      legal: boardState.legal
     };
   });
 

@@ -3,10 +3,13 @@ import { computed, shallowRef, watch } from 'vue';
 export function useBoardAnnotations(game) {
   const saved = shallowRef(new Map());
   const positionKey = computed(() => {
-    const state = game.state.value;
+    const state = game.boardState.value;
     if (!state) return '';
-    const pending = game.reviewPly.value === null ? state.pending?.notation || '' : '';
-    return [state.initialFen, ...state.moves.slice(0, game.ply.value), pending].join('|');
+    const pending =
+      game.analysis.value.enabled || game.reviewPly.value === null
+        ? state.pending?.notation || ''
+        : '';
+    return [state.initialFen, ...state.moves.slice(0, game.boardPly.value), pending].join('|');
   });
   const annotations = computed(() => saved.value.get(positionKey.value) || []);
 

@@ -241,7 +241,8 @@
   transform: translate(-50%, -50%);
   filter: drop-shadow(0 5px 4px #0005);
 }
-.board-annotations {
+.board-annotations,
+.board-suggestions {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -269,6 +270,26 @@
 }
 .board-annotations polygon {
   fill: #f39a32;
+}
+.board-suggestions {
+  --suggestion-color: #197454;
+}
+.board-suggestions .duck-suggestion {
+  --suggestion-color: #235ab4;
+}
+.board-suggestions path,
+.board-suggestions circle {
+  fill: none;
+  stroke: var(--suggestion-color);
+  stroke-width: 0.16;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.board-suggestions circle {
+  stroke-width: 0.1;
+}
+.board-suggestions polygon {
+  fill: var(--suggestion-color);
 }
 @keyframes board-piece-move {
   from {

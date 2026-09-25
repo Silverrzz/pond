@@ -24,6 +24,14 @@ contextBridge.exposeInMainWorld('pond', {
   cancelPiece: () => call('cancel-piece'),
   takeback: () => call('takeback'),
   review: (ply) => call('review', ply),
+  startAnalysis: (data) => call('analysis-start', data),
+  openAnalysisPgn: () => call('analysis-open-pgn'),
+  stopAnalysis: () => call('analysis-stop'),
+  analysisMove: (data) => call('analysis-move', data),
+  analysisBack: (data) => call('analysis-back', data),
+  analysisReset: (data) => call('analysis-reset', data),
+  analysisSettings: (data) => call('analysis-settings', data),
+  copyAnalysisFen: (data) => call('analysis-copy-fen', data),
   resign: () => call('resign'),
   draw: () => call('draw'),
   copyFen: (ply) => call('copy-fen', ply),
@@ -32,5 +40,6 @@ contextBridge.exposeInMainWorld('pond', {
   onState: subscribe('state'),
   onClock: subscribe('clock'),
   onInfo: subscribe('info'),
+  onAnalysis: subscribe('analysis'),
   onLogs: subscribe('logs')
 });

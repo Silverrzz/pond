@@ -37,12 +37,16 @@ export function useShortcuts(game, commands, activeTab) {
       if (game.promotionMove.value || game.selected.value !== null) {
         game.selected.value = null;
         game.promotionMove.value = null;
-      } else if (game.state.value.pending && !game.submitting.value) void game.cancelPiece();
+      } else if (game.boardState.value.pending && !game.submitting.value) void game.cancelPiece();
       return;
     }
     if (key === 'f') {
       event.preventDefault();
       game.flip();
+    }
+    if (key === 'a') {
+      event.preventDefault();
+      void commands.analysis();
     }
   }
   onMounted(() => document.addEventListener('keydown', keydown));

@@ -2,7 +2,15 @@ import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue';
 import { sideName, timeDescription, variantName } from '../shared/format';
 
 export function useGame(feedback) {
-  const state = shallowRef(null);
+  const liveState = shallowRef(null);
+  const state = computed(() =>
+    analysis.value.enabled && analysis.value.source
+      ? { ...liveState.value, ...analysis.value.source }
+      : liveState.value
+  );
+  const analysis = shallowRef({ enabled: false });
+  const analysisBusy = ref(false);
+  const analysisEngine = ref(localStorage.getItem('pond-analysis-engine') || '');
   const catalog = shallowRef([]);
   const liveSearches = shallowRef({});
   const evaluations = shallowRef([]);
@@ -24,16 +32,31 @@ export function useGame(feedback) {
   let disposed = false;
 
   const frame = computed(() =>
-    reviewPly.value === null ? state.value : reviewFrame.value || state.value
+    analysis.value.enabled
+      ? analysis.value.frame
+      : reviewPly.value === null
+        ? state.value
+        : reviewFrame.value || state.value
   );
-  const ply = computed(() => reviewPly.value ?? state.value?.moves.length ?? 0);
+  const boardState = computed(() => (analysis.value.enabled ? analysis.value.frame : state.value));
+  const boardPly = computed(() =>
+    analysis.value.enabled ? analysis.value.frame.moves.length : ply.value
+  );
+  const ply = computed(() =>
+    analysis.value.enabled
+      ? analysis.value.rootPly
+      : (reviewPly.value ?? state.value?.moves.length ?? 0)
+  );
   const humanTurn = computed(
     () =>
-      state.value?.phase === 'playing' &&
-      !state.value.busy &&
+      !analysisBusy.value &&
       !submitting.value &&
-      reviewPly.value === null &&
-      state.value.config[state.value.turn] === 'human'
+      (analysis.value.enabled
+        ? !analysis.value.frame.result
+        : state.value?.phase === 'playing' &&
+          !state.value.busy &&
+          reviewPly.value === null &&
+          state.value.config[state.value.turn] === 'human')
   );
   const names = computed(() =>
     Object.fromEntries(
@@ -81,6 +104,14 @@ export function useGame(feedback) {
   const status = computed(() => {
     const current = state.value;
     if (!current) return '';
+    if (analysis.value.enabled) {
+      const position = analysis.value.frame;
+      return (
+        'Analysis · ' +
+        (position.result ||
+          sideName(position.turn) + (position.pending ? ': place duck' : ' to move'))
+      );
+    }
     if (reviewPly.value !== null)
       return (
         'Review · ' +
@@ -117,7 +148,7 @@ export function useGame(feedback) {
       selected.value = null;
       promotionMove.value = null;
     }
-    state.value = next;
+    liveState.value = next;
     liveSearches.value = next.searches || {};
     evaluations.value = next.evaluations || [];
     receiveClock(next.clock);
@@ -163,15 +194,81 @@ export function useGame(feedback) {
     liveSearches.value = { ...liveSearches.value, [info.channel]: search };
   }
 
+  function receiveAnalysis(next) {
+    if (next.enabled && next.gameId !== state.value?.id) return;
+    if (next.revision === analysis.value.revision) next.frame = analysis.value.frame;
+    else {
+      selected.value = null;
+      promotionMove.value = null;
+    }
+    analysis.value = next;
+    if (next.engineId) analysisEngine.value = next.engineId;
+  }
+
+  async function startAnalysis(target = ply.value, options = {}, errorTarget) {
+    if (!state.value || analysisBusy.value || submitting.value) return;
+    const engine =
+      catalog.value.find((entry) => entry.id === analysisEngine.value) ||
+      catalog.value.reduce(
+        (latest, entry) => (!latest || entry.addedOrder > latest.addedOrder ? entry : latest),
+        null
+      );
+    analysisBusy.value = true;
+    try {
+      return await feedback.action(async () => {
+        const next = await window.pond.startAnalysis({
+          gameId: state.value.id,
+          ply: target,
+          engineId: engine?.id || '',
+          source: analysis.value.enabled && analysis.value.source ? 'existing' : 'current',
+          ...options
+        });
+        receiveAnalysis(next);
+        if (options.source) resetReview();
+        if (engine) {
+          analysisEngine.value = engine.id;
+          localStorage.setItem('pond-analysis-engine', engine.id);
+        }
+        return true;
+      }, errorTarget);
+    } finally {
+      analysisBusy.value = false;
+    }
+  }
+
+  async function analysisAction(method, data = {}) {
+    if (analysisBusy.value || submitting.value || !analysis.value.enabled) return;
+    analysisBusy.value = true;
+    try {
+      await feedback.action(async () => {
+        await window.pond[method]({ revision: analysis.value.revision, ...data });
+        if (data.engineId) localStorage.setItem('pond-analysis-engine', data.engineId);
+      });
+    } finally {
+      analysisBusy.value = false;
+    }
+  }
+
+  async function stopAnalysis() {
+    if (analysisBusy.value || submitting.value) return;
+    analysisBusy.value = true;
+    try {
+      await feedback.action(() => window.pond.stopAnalysis());
+      resetReview();
+    } finally {
+      analysisBusy.value = false;
+    }
+  }
+
   async function submit({ dragged = false, ...move }) {
     if (submitting.value) return;
-    const current = state.value;
+    const current = boardState.value;
     const legal = current.legal.find(
       (candidate) => candidate.from === move.from && candidate.to === move.to
     );
     const marker = dragged
       ? {
-          gameId: current.id,
+          gameId: state.value.id,
           position: current.board.join(',') + ':' + current.duck,
           from: current.pending ? current.duck : move.from,
           to: legal?.castle?.kingTo ?? move.to,
@@ -185,7 +282,9 @@ export function useGame(feedback) {
     try {
       let accepted = false;
       await feedback.action(async () => {
-        await window.pond.move(move);
+        if (analysis.value.enabled)
+          await window.pond.analysisMove({ revision: analysis.value.revision, ...move });
+        else await window.pond.move(move);
         accepted = true;
       });
       if (!accepted && draggedMove.value === marker) draggedMove.value = null;
@@ -196,7 +295,7 @@ export function useGame(feedback) {
 
   function clickSquare(square, dragged = false) {
     if (!humanTurn.value || promotionMove.value) return;
-    const current = state.value;
+    const current = boardState.value;
     if (current.pending) {
       if (!current.board[square] && square !== current.duck) void submit({ to: square, dragged });
       return;
@@ -221,10 +320,14 @@ export function useGame(feedback) {
   async function cancelPiece() {
     selected.value = null;
     promotionMove.value = null;
-    if (state.value?.pending && !submitting.value) {
+    if (boardState.value?.pending && !submitting.value) {
       submitting.value = true;
       try {
-        await feedback.action(() => window.pond.cancelPiece());
+        await feedback.action(() =>
+          analysis.value.enabled
+            ? window.pond.analysisBack({ revision: analysis.value.revision })
+            : window.pond.cancelPiece()
+        );
       } finally {
         submitting.value = false;
       }
@@ -233,22 +336,32 @@ export function useGame(feedback) {
 
   async function review(value) {
     if (!state.value) return;
+    if (analysisBusy.value || submitting.value) return;
     draggedMove.value = null;
     const token = ++reviewToken;
     const target = Math.max(0, Math.min(value, state.value.moves.length));
     reviewTarget.value = target;
     selected.value = null;
     promotionMove.value = null;
-    if (target === state.value.moves.length) {
-      resetReview();
+    if (analysis.value.enabled && analysis.value.source) {
+      if (await startAnalysis(target)) reviewPly.value = target;
+      reviewTarget.value = null;
       return;
     }
     const next = await feedback.action(() => window.pond.review(target));
     if (disposed || token !== reviewToken) return;
+    if (next && analysis.value.enabled && !(await startAnalysis(target))) {
+      reviewTarget.value = null;
+      return;
+    }
+    if (disposed || token !== reviewToken) return;
     reviewTarget.value = null;
     if (next) {
-      reviewPly.value = target;
-      reviewFrame.value = next;
+      if (target === state.value.moves.length) resetReview();
+      else {
+        reviewPly.value = target;
+        reviewFrame.value = next;
+      }
     }
   }
 
@@ -262,6 +375,7 @@ export function useGame(feedback) {
       window.pond.onState(receiveState),
       window.pond.onClock(receiveClock),
       window.pond.onInfo(receiveInfo),
+      window.pond.onAnalysis(receiveAnalysis),
       window.pond.onLogs((value) => {
         logs.value = value;
       })
@@ -273,6 +387,7 @@ export function useGame(feedback) {
       directory.value = initial.directory;
       logs.value = initial.logs;
       receiveState(initial.state);
+      receiveAnalysis(initial.analysis);
     });
   });
   onUnmounted(() => {
@@ -283,6 +398,13 @@ export function useGame(feedback) {
 
   return {
     state,
+    analysis,
+    analysisBusy,
+    boardState,
+    boardPly,
+    startAnalysis,
+    stopAnalysis,
+    analysisAction,
     liveSearches,
     evaluations,
     catalog,
