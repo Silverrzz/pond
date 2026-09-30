@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('pond', {
   stopAnalysis: () => call('analysis-stop'),
   analysisMove: (data) => call('analysis-move', data),
   analysisBack: (data) => call('analysis-back', data),
+  analysisNavigate: (data) => call('analysis-navigate', data),
   analysisReset: (data) => call('analysis-reset', data),
   analysisSettings: (data) => call('analysis-settings', data),
   copyAnalysisFen: (data) => call('analysis-copy-fen', data),

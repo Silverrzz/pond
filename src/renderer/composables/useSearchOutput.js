@@ -21,6 +21,13 @@ export function useSearchOutput(game) {
           state: game.state.value
             ? {
                 ...game.state.value,
+                ...(game.analysis.value.enabled
+                  ? {
+                      moves: game.analysis.value.history.line
+                        .slice(1)
+                        .map((id) => game.analysis.value.history.nodes[id].record.uci)
+                    }
+                  : {}),
                 searches: game.liveSearches.value,
                 analysisActive: game.analysis.value.enabled,
                 evaluations: game.analysis.value.enabled

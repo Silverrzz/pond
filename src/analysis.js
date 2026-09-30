@@ -4,6 +4,7 @@ const { Engine } = require('./engine');
 const { SearchData } = require('./search-data');
 const { parsePgn, formatPgn } = require('./pgn');
 const { GameClock } = require('./clock');
+const { MoveTree } = require('./move-tree');
 
 const scoreValue = (row) =>
   row.scoreType === 'mate'
@@ -51,8 +52,11 @@ class Analysis extends EventEmitter {
       lines: this.lines,
       maxLines: this.maxLines,
       frame: this.frame,
+      history: this.history,
       search: this.game ? this.data.current[this.game.turn] : null,
-      evaluations: [...this.points.values()]
+      evaluations: (this.history?.line || []).flatMap((id) =>
+        this.points.has(id) ? [this.points.get(id)] : []
+      )
     };
   }
 
@@ -65,16 +69,20 @@ class Analysis extends EventEmitter {
   select(session, input) {
     if (!input || input.gameId !== session.id) throw new Error('The game has changed.');
     if (session.phase === 'starting') throw new Error('Wait for the game engines to start.');
-    let source = session.game;
-    let sourceState = null;
     if (input.source === 'existing') {
-      if (!this.enabled || !this.sourceGame) throw new Error('Open an analysis board first.');
-      source = this.sourceGame;
-      sourceState = this.source;
-    } else if (['fresh', 'fen', 'pgn'].includes(input.source)) {
+      if (!this.enabled || this.gameId !== session.id)
+        throw new Error('Open an analysis board first.');
+      this.navigate({ revision: this.revision, ply: input.ply });
+      return this.snapshot();
+    }
+    let source = session.game;
+    let document = session.pgn;
+    let sourceState = null;
+    if (['fresh', 'fen', 'pgn'].includes(input.source)) {
       if (input.source === 'fen' && !input.fen?.trim()) throw new Error('Paste a FEN position.');
       if (input.source === 'pgn' && !input.pgn?.trim()) throw new Error('Paste a PGN game.');
       const imported = input.source === 'pgn' ? parsePgn(input.pgn) : null;
+      document = imported?.pgn;
       source =
         imported?.game ||
         new DuckGame({
@@ -97,13 +105,10 @@ class Analysis extends EventEmitter {
     }
     source.at(input.ply);
     if (input.engineId) this.resolveEngine(input.engineId);
+    const tree = new MoveTree(source, document);
     const game = Object.assign(Object.create(DuckGame.prototype), structuredClone(source));
     if (!source.pending || input.ply !== source.moves.length) game.rewind(input.ply);
     if (session.phase === 'playing') session.pause();
-    if (this.gameId !== session.id || this.engineId !== input.engineId) this.points.clear();
-    if (['fresh', 'fen', 'pgn'].includes(input.source) || (this.source && !sourceState))
-      this.points.clear();
-    this.sourceGame = sourceState ? source : null;
     this.source = sourceState;
     this.gameId = session.id;
     this.rootPly = input.ply;
@@ -111,6 +116,10 @@ class Analysis extends EventEmitter {
     if (!this.enabled) this.running = !!input.engineId;
     if (!input.engineId) this.running = false;
     this.enabled = true;
+    this.tree = tree;
+    this.nodeId = tree.line()[input.ply];
+    this.rootNodeId = this.nodeId;
+    this.points.clear();
     this.game = game;
     this.changed();
     return this.snapshot();
@@ -125,7 +134,8 @@ class Analysis extends EventEmitter {
     if (this.game.pending) throw new Error('Complete or undo the piece move before saving.');
     return formatPgn(
       {
-        game: this.game,
+        game: this.tree.gameAt(this.mainlineEnd()),
+        movetext: this.tree.movetext(),
         config: { w: 'human', b: 'human', fen: this.game.initialFen },
         clock: new GameClock({ w: { mode: 'unlimited' }, b: { mode: 'unlimited' } }),
         clockFrames: [],
@@ -139,23 +149,45 @@ class Analysis extends EventEmitter {
     this.requirePosition(input);
     if (this.game.moves.length - this.rootPly >= 1024)
       throw new Error('This variation is too long. Return to the game position.');
+    if (this.tree.nodes.length >= 20000) throw new Error('The analysis contains too many moves.');
     if (this.game.pending) this.game.placeDuck(input.to);
     else this.game.piece(input.from, input.to, input.promotion);
+    if (!this.game.pending) {
+      this.nodeId = this.tree.add(this.nodeId, this.game.records.at(-1));
+      this.tree.select(this.nodeId);
+    }
+    this.changed();
+  }
+
+  mainlineEnd() {
+    let node = this.tree.nodes[0];
+    while (node.children.length) node = this.tree.nodes[node.children[0]];
+    return node.id;
+  }
+
+  navigate(input) {
+    this.requirePosition(input);
+    const id = input.nodeId ?? this.tree.line()[input.ply];
+    const game = this.tree.gameAt(id);
+    this.tree.select(id);
+    this.nodeId = id;
+    this.game = game;
     this.changed();
   }
 
   back(input) {
     this.requirePosition(input);
     if (this.game.pending) this.game.cancelPiece();
-    else if (this.game.moves.length > this.rootPly) this.game.rewind(this.game.moves.length - 1);
-    else return;
+    else if (this.nodeId !== 0) {
+      this.navigate({ ...input, nodeId: this.tree.nodes[this.nodeId].parent });
+      return;
+    } else return;
     this.changed();
   }
 
   reset(input) {
     this.requirePosition(input);
-    this.game.rewind(this.rootPly);
-    this.changed();
+    this.navigate({ ...input, nodeId: this.rootNodeId });
   }
 
   settings(input) {
@@ -186,6 +218,11 @@ class Analysis extends EventEmitter {
     const token = ++this.generation;
     this.error = '';
     this.frame = this.game.snapshot();
+    this.history = {
+      nodes: this.tree.nodes.map((node) => ({ ...node, children: [...node.children] })),
+      current: this.nodeId,
+      line: this.tree.line()
+    };
     if (keepSearch) this.data.stop(this.game.turn);
     else {
       const previous = this.data.current[this.game.turn];
@@ -300,8 +337,7 @@ class Analysis extends EventEmitter {
               if (token !== this.generation) return;
               const info = this.data.update(line, side);
               if (!info) return;
-              if (info.evaluation && this.game.moves.length === this.rootPly)
-                this.points.set(this.rootPly, info.evaluation);
+              if (info.evaluation) this.points.set(this.nodeId, info.evaluation);
               if (!this.publishTimer) this.publishTimer = setTimeout(() => this.publish(), 100);
             })
       )

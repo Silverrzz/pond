@@ -44,8 +44,13 @@ export function useGame(feedback) {
   );
   const ply = computed(() =>
     analysis.value.enabled
-      ? analysis.value.rootPly
+      ? analysis.value.frame.moves.length
       : (reviewPly.value ?? state.value?.moves.length ?? 0)
+  );
+  const historyLength = computed(() =>
+    analysis.value.enabled
+      ? (analysis.value.history?.line.length || 1) - 1
+      : state.value?.moves.length || 0
   );
   const humanTurn = computed(
     () =>
@@ -339,12 +344,12 @@ export function useGame(feedback) {
     if (analysisBusy.value || submitting.value) return;
     draggedMove.value = null;
     const token = ++reviewToken;
-    const target = Math.max(0, Math.min(value, state.value.moves.length));
+    const target = Math.max(0, Math.min(value, historyLength.value));
     reviewTarget.value = target;
     selected.value = null;
     promotionMove.value = null;
-    if (analysis.value.enabled && analysis.value.source) {
-      if (await startAnalysis(target)) reviewPly.value = target;
+    if (analysis.value.enabled) {
+      await analysisAction('analysisNavigate', { ply: target });
       reviewTarget.value = null;
       return;
     }
@@ -422,6 +427,7 @@ export function useGame(feedback) {
     clockReceived,
     frame,
     ply,
+    historyLength,
     humanTurn,
     names,
     searches,

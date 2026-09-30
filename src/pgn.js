@@ -534,6 +534,7 @@ function formatPgn(session, playerName) {
     if (original) moves.push(...annotations(stored.entries[i].annotations));
     moves.push(...(analysis.get(i + 1) || []));
   }
+  if (session.movetext) moves.splice(0, moves.length, ...session.movetext);
   moves.push(tags.Result);
   const lines = [];
   let line = '';
@@ -555,4 +556,4 @@ function formatPgn(session, playerName) {
   );
 }
 
-module.exports = { parsePgn, formatPgn };
+module.exports = { parsePgn, formatPgn, readDocument, playSan };

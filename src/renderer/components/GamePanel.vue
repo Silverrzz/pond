@@ -5,8 +5,18 @@ import { sideName, squareName } from '../shared/format';
 import MoveHistory from './MoveHistory.vue';
 
 const { game, commands, activeTab } = usePond();
-const { state, frame, analysis, ply, heading, reviewPly, reviewTarget, starting, submitting } =
-  game;
+const {
+  state,
+  frame,
+  analysis,
+  ply,
+  historyLength,
+  heading,
+  reviewPly,
+  reviewTarget,
+  starting,
+  submitting
+} = game;
 const message = computed(() =>
   !state.value ||
   state.value.phase === 'starting' ||
@@ -116,14 +126,14 @@ const tabs = [
           <path d="m15 6-6 6 6 6" />
         </svg>
       </button>
-      <span id="move-counter" :aria-label="ply + ' of ' + (state?.moves.length || 0) + ' moves'">
+      <span id="move-counter" :aria-label="ply + ' of ' + historyLength + ' moves'">
         <span class="current-ply">{{ ply }}</span>
         <span class="move-counter-divider" aria-hidden="true">/</span>
-        <span>{{ state?.moves.length || 0 }}</span>
+        <span>{{ historyLength }}</span>
       </span>
       <button
         id="next-move"
-        :disabled="ply >= (state?.moves.length || 0)"
+        :disabled="ply >= historyLength"
         aria-label="Next move"
         title="Next (Right arrow)"
         @click="game.review((reviewTarget ?? ply) + 1)"
@@ -134,10 +144,10 @@ const tabs = [
       </button>
       <button
         id="last-move"
-        :disabled="ply >= (state?.moves.length || 0)"
+        :disabled="ply >= historyLength"
         aria-label="Latest position"
         title="Latest (End)"
-        @click="game.review(state.moves.length)"
+        @click="game.review(historyLength)"
       >
         <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M19 5v14M6 5l7 7-7 7" />

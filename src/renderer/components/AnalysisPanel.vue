@@ -82,19 +82,16 @@ function settings(data) {
     >
       {{ status }}
     </div>
-    <div v-if="branch.length || position?.pending" class="analysis-branch">
+    <div v-if="analysis.history?.line.length > 1 || position?.pending" class="analysis-branch">
       <div class="analysis-branch-controls">
         <button
-          :disabled="busy || (!branch.length && !position?.pending)"
+          :disabled="busy || (!position?.moves.length && !position?.pending)"
           @click="game.analysisAction('analysisBack')"
         >
-          Undo
+          Back
         </button>
-        <button
-          :disabled="busy || (!branch.length && !position?.pending)"
-          @click="game.analysisAction('analysisReset')"
-        >
-          Reset variation
+        <button :disabled="busy" @click="game.analysisAction('analysisReset')">
+          Return to analysis start
         </button>
       </div>
       <div

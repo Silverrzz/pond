@@ -13,7 +13,7 @@ export function useShortcuts(game, commands, activeTab) {
       ArrowRight: cursor + 1,
       ArrowDown: cursor + 1,
       Home: 0,
-      End: game.state.value.moves.length
+      End: game.historyLength.value
     }[event.key];
     if (target !== undefined && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();

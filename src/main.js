@@ -326,6 +326,7 @@ app
     handle('analysis-stop', () => analysis.close());
     handle('analysis-move', (data) => analysis.move(data));
     handle('analysis-back', (data) => analysis.back(data));
+    handle('analysis-navigate', (data) => analysis.navigate(data));
     handle('analysis-reset', (data) => analysis.reset(data));
     handle('analysis-settings', (data) => analysis.settings(data));
     handle('analysis-copy-fen', (data) => {
